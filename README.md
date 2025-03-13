@@ -1,6 +1,49 @@
 # Repository Ranking Tool
 This tool ranks Git repositories based on commit activity using a time-decay algorithm. Recent commits are weighted more heavily than older ones, providing a way to identify the most actively developed repositories.
 
+## Algorithm Explanation
+
+The Repository Ranking Tool uses a time-decay algorithm to weight repository activity, giving more importance to recent commits while gradually reducing the impact of older contributions.
+
+### Time-Decay Scoring Algorithm
+
+1. **Initial Setup**:
+   - The algorithm defines a decay rate based on configurable parameters:
+     - `defaultWeight` (0.3): The target weight for commits from `defaultDaysPeriod` ago
+     - `defaultDaysPeriod` (30): The number of days used as a reference period
+
+2. **Decay Rate Calculation**:
+   - The decay rate is calculated using an exponential decay formula:
+     ```
+     decayRate = -ln(targetWeight) / (daysPeriod * 86400)
+     ```
+   - This ensures that commits from 30 days ago will have 30% of the weight of current commits
+
+3. **Commit Processing**:
+   - For each commit, the algorithm:
+     - Records the repository, user, files changed, and lines added/deleted
+     - Tracks the time range (oldest and newest commits)
+     - Aggregates metrics per repository
+
+4. **Score Calculation**:
+   - For each commit, a weight is calculated based on its age:
+     ```
+     weight = e^(-decayRate * age)
+     ```
+   - Where `age` is the time difference (in seconds) between the commit and the most recent commit
+   - The repository score is incremented by: `totalLinesChanged × weight`
+   - This means:
+     - The most recent commits have a weight of approximately 1.0
+     - Older commits have progressively smaller weights
+     - Very old commits contribute minimally to the final score
+
+5. **Repository Ranking**:
+   - Repositories are sorted by their final score in descending order
+   - Only the top N repositories (specified by the `-tail` parameter) are included in the output
+
+This approach ensures that actively maintained repositories rank higher than those with historical activity but little recent development.
+
+
 ## Building and Running
 ### Prerequisites
 - Go 1.22 or higher
