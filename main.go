@@ -2,17 +2,21 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 )
 
 func main() {
 	inputFlag := flag.String("input", "", "input file csv path")
 	outputFlag := flag.String("output", "", "output file csv or json path")
+	tailFlag := flag.String("tail", "20", "number of records to display")
 	flag.Parse()
 
 	inputPath, err := filepath.Abs(*inputFlag)
@@ -36,7 +40,23 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Print(records)
+
+	timeDecayRanker := NewTimeDecay()
+
+	repos := timeDecayRanker.Rank(records)
+
+	sort.Slice(repos, func(i, j int) bool {
+		return repos[i].Score > repos[j].Score
+	})
+	tail, err := strconv.Atoi(*tailFlag)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = writeToJSON(outputPath, repos[:tail])
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Successfully ranked repositories")
 }
 
 func validateInputPath(inputPath string) error {
@@ -66,4 +86,17 @@ func readCsv(path string) ([][]string, error) {
 		return nil, err
 	}
 	return records, nil
+}
+
+func writeToJSON(filename string, data []Repository) error {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling to JSON: %w", err)
+	}
+	err = os.WriteFile(filename, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing to file: %w", err)
+	}
+
+	return nil
 }

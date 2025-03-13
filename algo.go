@@ -2,61 +2,137 @@ package main
 
 import (
 	"log"
+	"math"
 	"strconv"
 	"time"
 )
 
-type Ranker interface {
-	Rank(records []Repository) []Repository
+const (
+	defaultWeight     = 0.3
+	defaultDaysPeriod = 30
+)
+
+type Commit struct {
+	RepoName          string
+	User              string
+	Files             int
+	Additions         int
+	Deletions         int
+	Timestamp         int
+	TotalLinesChanged int
+	Weight            float64
 }
+
+type Repository struct {
+	Name              string
+	Additions         int
+	Deletions         int
+	TotalLinesChanged int
+	Files             int
+	Score             float64
+}
+
+type Repositories map[string]*Repository
 
 type TimeDecay struct {
-	Weight    float64
-	DecayRate float64
-	MaxAge    time.Duration
-	MinAge    time.Duration
+	DecayRate    float64
+	Oldest       int
+	Recent       int
+	Commits      []Commit
+	Repositories Repositories
 }
 
-func (t TimeDecay) parseRecords(records [][]string) {
-	repositories := make(map[string]Repository)
+func NewTimeDecay() TimeDecay {
+	t := TimeDecay{
+		DecayRate:    calculateDecayRate(defaultWeight, defaultDaysPeriod),
+		Repositories: make(Repositories),
+		Commits:      make([]Commit, 0),
+	}
+	return t
+}
+
+func (t *TimeDecay) parseRecords(records [][]string) {
+	older := int(time.Now().Unix())
+	newer := 0
+	commits := make([]Commit, len(records)-1)
+	commitIndex := 0
 	for i, record := range records {
 		// ignore csv header
 		if i == 0 {
 			continue
 		}
-		older := int(time.Now().Unix())
-		newer := 0
-
 		commit, err := parseCommit(record)
 		if err != nil {
 			log.Fatal(err)
 		}
+		commits[commitIndex] = commit
+		commitIndex++
 		older = min(commit.Timestamp, older)
 		newer = max(commit.Timestamp, newer)
-
-		repo, found := repositories[commit.RepoName]
+		repo, found := t.Repositories[commit.RepoName]
 		if !found {
 			repo = repositoryFromCommit(commit)
+			t.Repositories[commit.RepoName] = repo
 		}
 		repo.AddCommit(commit)
 	}
+	t.Oldest = older
+	t.Recent = newer
+	t.Commits = commits
+
+	return
 }
 
-func (t TimeDecay) Rank(repositories []Repository) []Repository {
+func (t *TimeDecay) Rank(records [][]string) []Repository {
+	t.parseRecords(records)
+	log.Printf("Time range: oldest=%d, newest=%d (diff: %d seconds)",
+		t.Oldest, t.Recent, t.Recent-t.Oldest)
 
-	return nil
+	// Debug the decay rate
+	log.Printf("Using decay rate: %.10f", t.DecayRate)
+	for _, commit := range t.Commits {
+		age := t.Recent - commit.Timestamp
+		weight := calculateCommitWeight(float64(age), t.DecayRate)
+		t.Repositories[commit.RepoName].Score += float64(commit.TotalLinesChanged) * weight
+	}
+	return t.Repositories.ToSlice()
 }
 
-func min(commitTimestamp, current int) int {
-	if commitTimestamp < current {
-		current = commitTimestamp
+func (r *Repository) AddCommit(commit Commit) {
+	r.Files += commit.Files
+	r.Additions += commit.Additions
+	r.Deletions += commit.Deletions
+	r.TotalLinesChanged += commit.TotalLinesChanged
+}
+
+func (r Repositories) ToSlice() []Repository {
+	var slice []Repository
+	for _, repo := range r {
+		slice = append(slice, *repo)
+	}
+	return slice
+}
+
+func calculateDecayRate(targetWeight float64, daysPeriod int) float64 {
+	periodInSeconds := float64(daysPeriod * 24 * 60 * 60)
+	decayRate := -math.Log(targetWeight) / periodInSeconds
+	return decayRate
+}
+
+func calculateCommitWeight(age, decayRate float64) float64 {
+	return math.Exp(-decayRate * age)
+}
+
+func min(target, current int) int {
+	if target < current {
+		current = target
 	}
 	return current
 }
 
-func max(commitTimestamp, current int) int {
-	if commitTimestamp > current {
-		current = commitTimestamp
+func max(target, current int) int {
+	if target > current {
+		current = target
 	}
 	return current
 }
@@ -91,26 +167,8 @@ func parseCommit(record []string) (Commit, error) {
 	}, nil
 }
 
-type Commit struct {
-	RepoName          string
-	User              string
-	Files             int
-	Additions         int
-	Deletions         int
-	Timestamp         int
-	TotalLinesChanged int
-}
-
-type Repository struct {
-	Name              string
-	Additions         int
-	Deletions         int
-	TotalLinesChanged int
-	Files             int
-}
-
-func repositoryFromCommit(commit Commit) Repository {
-	return Repository{
+func repositoryFromCommit(commit Commit) *Repository {
+	return &Repository{
 		Name:              commit.RepoName,
 		Additions:         commit.Additions,
 		Deletions:         commit.Deletions,
@@ -118,12 +176,3 @@ func repositoryFromCommit(commit Commit) Repository {
 		Files:             commit.Files,
 	}
 }
-
-func (r *Repository) AddCommit(commit Commit) {
-	r.Files += commit.Files
-	r.Additions += commit.Additions
-	r.Deletions += commit.Deletions
-	r.TotalLinesChanged += commit.TotalLinesChanged
-}
-
-type Repositories map[string]*Repository
